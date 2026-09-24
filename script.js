@@ -1,4 +1,4 @@
-// 1. IMPORT FIREBASE (Including arrayUnion for nested replies)
+// 1. IMPORT FIREBASE MODULAR SDK
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { 
   getFirestore, 
@@ -27,14 +27,22 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const notesRef = collection(db, "anonymous_notes");
 
-// 3. STATE
+// 3. APP STATE
 let allNotes = [];
 let sentNoteIds = JSON.parse(localStorage.getItem('ghostnote_my_sent_ids')) || [];
 let userLikedIds = new Set(JSON.parse(localStorage.getItem('ghostnote_likes')) || []);
-let openThreads = new Set(); // Tracks which reply drawers are currently toggled open
+let openThreads = new Set();
 let activeTab = 'wall';
 let currentCategory = 'Appreciation';
 let noteToDeleteId = null;
+
+// Media attachments state
+let attachedImageBase64 = null;
+let attachedAudioBase64 = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let recordInterval = null;
+let recordSeconds = 0;
 
 const PROMPTS = [
   "What is one piece of feedback you've been hesitant to share?",
@@ -65,7 +73,22 @@ const deleteModal = document.getElementById('deleteModal');
 const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
 const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
 
-// 5. INITIALIZE & LISTEN REAL-TIME
+// Media DOM elements
+const imageInput = document.getElementById('imageInput');
+const triggerImageBtn = document.getElementById('triggerImageBtn');
+const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+const imagePreview = document.getElementById('imagePreview');
+const removeImageBtn = document.getElementById('removeImageBtn');
+
+const recordVoiceBtn = document.getElementById('recordVoiceBtn');
+const recordingBar = document.getElementById('recordingBar');
+const recordTimer = document.getElementById('recordTimer');
+const stopRecordBtn = document.getElementById('stopRecordBtn');
+const audioPreviewContainer = document.getElementById('audioPreviewContainer');
+const audioPreview = document.getElementById('audioPreview');
+const removeAudioBtn = document.getElementById('removeAudioBtn');
+
+// 5. INITIALIZATION
 updateSentCounter();
 bindEvents();
 listenToLiveNotes();
@@ -76,7 +99,7 @@ function listenToLiveNotes() {
     snapshot.forEach((docItem) => {
       allNotes.push({ id: docItem.id, ...docItem.data() });
     });
-    // Newest first
+    // Sort in memory by timestamp newest first
     allNotes.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     renderNotes();
   }, (err) => {
@@ -112,36 +135,180 @@ function bindEvents() {
 
   cancelDeleteBtn.addEventListener('click', closeDeleteModal);
   confirmDeleteBtn.addEventListener('click', executeDelete);
+
+  // Image Upload Handling
+  triggerImageBtn.addEventListener('click', () => imageInput.click());
+  imageInput.addEventListener('change', handleImageSelection);
+  removeImageBtn.addEventListener('click', clearImageAttachment);
+
+  // Audio Recording Handling
+  recordVoiceBtn.addEventListener('click', startAudioRecording);
+  stopRecordBtn.addEventListener('click', stopAudioRecording);
+  removeAudioBtn.addEventListener('click', clearAudioAttachment);
 }
 
-// 6. SUBMIT ORIGINAL NOTE
+// ==========================================
+// 6. IMAGE COMPRESSION & ATTACHMENT
+// ==========================================
+function handleImageSelection(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const img = new Image();
+    img.onload = () => {
+      // Compress and resize image so it fits comfortably in Firestore (under 100 KB)
+      const canvas = document.createElement('canvas');
+      const MAX_WIDTH = 640;
+      const MAX_HEIGHT = 640;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > MAX_WIDTH) {
+          height = Math.round((height * MAX_WIDTH) / width);
+          width = MAX_WIDTH;
+        }
+      } else {
+        if (height > MAX_HEIGHT) {
+          width = Math.round((width * MAX_HEIGHT) / height);
+          height = MAX_HEIGHT;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // Export as compact JPEG
+      attachedImageBase64 = canvas.toDataURL('image/jpeg', 0.65);
+      imagePreview.src = attachedImageBase64;
+      imagePreviewContainer.classList.remove('hidden');
+    };
+    img.src = event.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearImageAttachment() {
+  attachedImageBase64 = null;
+  imageInput.value = '';
+  imagePreview.src = '';
+  imagePreviewContainer.classList.add('hidden');
+}
+
+// ==========================================
+// 7. VOICE NOTE RECORDING (MediaRecorder API)
+// ==========================================
+async function startAudioRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) audioChunks.push(event.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        attachedAudioBase64 = reader.result;
+        audioPreview.src = attachedAudioBase64;
+        audioPreviewContainer.classList.remove('hidden');
+      };
+      reader.readAsDataURL(audioBlob);
+
+      // Stop all microphone audio tracks
+      stream.getTracks().forEach(track => track.stop());
+    };
+
+    mediaRecorder.start();
+    recordSeconds = 0;
+    recordTimer.textContent = '0:00';
+    recordingBar.classList.remove('hidden');
+    recordingBar.classList.add('flex');
+    recordVoiceBtn.disabled = true;
+
+    recordInterval = setInterval(() => {
+      recordSeconds++;
+      const mins = Math.floor(recordSeconds / 60);
+      const secs = recordSeconds % 60;
+      recordTimer.textContent = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+      // Max 20-second voice note limit (keeps files small)
+      if (recordSeconds >= 20) {
+        stopAudioRecording();
+      }
+    }, 1000);
+  } catch (err) {
+    alert("Microphone permission was denied or is not supported in this browser.");
+  }
+}
+
+function stopAudioRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  clearInterval(recordInterval);
+  recordingBar.classList.add('hidden');
+  recordingBar.classList.remove('flex');
+  recordVoiceBtn.disabled = false;
+}
+
+function clearAudioAttachment() {
+  attachedAudioBase64 = null;
+  audioPreview.src = '';
+  audioPreviewContainer.classList.add('hidden');
+}
+
+// ==========================================
+// 8. SUBMIT NOTE (Text + Image + Audio)
+// ==========================================
 async function handleFormSubmit(e) {
   e.preventDefault();
   const to = toInput.value.trim();
   const body = messageInput.value.trim();
-  if (!to || !body) return;
+
+  // A note must have either text, an image, or a voice note
+  if (!to || (!body && !attachedImageBase64 && !attachedAudioBase64)) {
+    alert("Please write a message or attach a photo/voice note!");
+    return;
+  }
 
   const submitButton = noteForm.querySelector('button[type="submit"]');
   submitButton.disabled = true;
   submitButton.innerText = "Posting...";
 
   try {
-    const docAdded = await addDoc(notesRef, {
+    const docData = {
       to: to,
-      body: body,
+      body: body || '',
       category: currentCategory,
       timestamp: Date.now(),
       likes: 0,
-      replies: [] // Initial empty thread
-    });
+      replies: []
+    };
+
+    // Attach media if present
+    if (attachedImageBase64) docData.image = attachedImageBase64;
+    if (attachedAudioBase64) docData.audio = attachedAudioBase64;
+
+    const docAdded = await addDoc(notesRef, docData);
 
     sentNoteIds.unshift(docAdded.id);
     localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
 
+    // Reset Form & Attachments
     noteForm.reset();
+    clearImageAttachment();
+    clearAudioAttachment();
     charCount.textContent = '0 / 300';
     updateSentCounter();
-    showToast('Note posted anonymously!', 'fa-check text-emerald-400');
+    showToast('Anonymous note posted!', 'fa-check text-emerald-400');
   } catch (error) {
     console.error("Save error:", error);
     alert("Error: " + error.message);
@@ -151,7 +318,9 @@ async function handleFormSubmit(e) {
   }
 }
 
-// 7. REPLY ACTIONS (Global)
+// ==========================================
+// 9. GLOBAL ACTIONS (Reply, Like, Delete, Copy)
+// ==========================================
 window.toggleReplies = function(id) {
   if (openThreads.has(id)) {
     openThreads.delete(id);
@@ -172,7 +341,6 @@ window.submitReply = async function(noteId) {
 
   try {
     const noteDoc = doc(db, "anonymous_notes", noteId);
-    // Add anonymous reply without any user identifiers
     await updateDoc(noteDoc, {
       replies: arrayUnion({
         id: 'rep_' + Date.now(),
@@ -180,12 +348,9 @@ window.submitReply = async function(noteId) {
         timestamp: Date.now()
       })
     });
-
-    // Make sure thread stays expanded
     openThreads.add(noteId);
-    showToast('Anonymous reply posted!', 'fa-reply text-blue-400');
+    showToast('Reply posted!', 'fa-reply text-blue-400');
   } catch (err) {
-    console.error("Reply error:", err);
     alert("Could not post reply: " + err.message);
   }
 };
@@ -226,7 +391,7 @@ async function executeDelete() {
     localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
     closeDeleteModal();
     updateSentCounter();
-    showToast('Note permanently deleted', 'fa-trash-can text-red-400');
+    showToast('Note deleted', 'fa-trash-can text-red-400');
   } catch (err) {
     alert("Delete failed: " + err.message);
   }
@@ -240,7 +405,9 @@ window.copyNote = function(id) {
   });
 };
 
-// 8. RENDER NOTES & INLINE THREADS
+// ==========================================
+// 10. RENDER NOTES (With Photo & Audio Player)
+// ==========================================
 function switchTab(tab) {
   activeTab = tab;
   if (tab === 'wall') {
@@ -289,7 +456,22 @@ function renderNotes() {
     const replies = item.replies || [];
     const isThreadOpen = openThreads.has(item.id);
 
-    // Build the list of replies for this card
+    // Render photo element if attached
+    const imageHtml = item.image ? `
+      <div class="rounded-lg overflow-hidden border border-slate-200 bg-slate-100 max-h-64 flex items-center justify-center mt-1">
+        <img src="${item.image}" alt="Attached media" class="w-full max-h-64 object-contain">
+      </div>
+    ` : '';
+
+    // Render audio player element if attached
+    const audioHtml = item.audio ? `
+      <div class="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200/80 mt-1">
+        <i class="fa-solid fa-microphone-lines text-slate-500 text-sm ml-1"></i>
+        <audio controls src="${item.audio}" class="w-full h-8"></audio>
+      </div>
+    ` : '';
+
+    // Render replies thread
     const repliesListHtml = replies.map(r => `
       <div class="flex items-start gap-2.5 bg-slate-50 p-2.5 rounded-lg border border-slate-200/70 text-xs">
         <i class="fa-solid fa-user-secret text-slate-400 text-sm mt-0.5"></i>
@@ -305,7 +487,6 @@ function renderNotes() {
 
     return `
       <article class="note-card flex flex-col gap-3">
-        <!-- Card Header -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-1.5">
             <span class="text-xs font-semibold text-slate-400 uppercase">To:</span>
@@ -321,14 +502,11 @@ function renderNotes() {
           </div>
         </div>
 
-        <!-- Note Text -->
-        <p class="text-sm text-slate-700 leading-normal break-words">
-          ${escapeHtml(item.body || '')}
-        </p>
+        ${item.body ? `<p class="text-sm text-slate-700 leading-normal break-words">${escapeHtml(item.body)}</p>` : ''}
+        ${imageHtml}
+        ${audioHtml}
 
-        <!-- Action Bar -->
         <div class="flex items-center justify-between pt-2 border-t border-slate-100 text-xs text-slate-500">
-          <!-- Reply Drawer Toggle Button -->
           <button onclick="toggleReplies('${item.id}')" class="flex items-center gap-1.5 hover:text-slate-900 transition-colors font-medium">
             <i class="fa-regular fa-comment-dots"></i>
             <span>${replies.length > 0 ? `${replies.length}${replies.length === 1 ? 'Reply' : 'Replies'}` : 'Reply'}</span>
@@ -348,11 +526,10 @@ function renderNotes() {
           </div>
         </div>
 
-        <!-- Inline Anonymous Reply Section (Collapsible) -->
+        <!-- Inline Reply Drawer -->
         <div class="${isThreadOpen ? 'block' : 'hidden'} mt-1 pt-3 border-t border-slate-100 flex flex-col gap-2.5">
           ${replies.length > 0 ? `<div class="flex flex-col gap-2 max-h-52 overflow-y-auto pr-1">${repliesListHtml}</div>` : `<p class="text-[11px] text-slate-400 italic">No replies yet. Be the first to answer anonymously!</p>`}
           
-          <!-- Reply Input Bar -->
           <div class="flex items-center gap-2 mt-1">
             <input 
               type="text" 

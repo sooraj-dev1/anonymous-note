@@ -50,7 +50,7 @@
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
         <div class="mb-5 pb-4 border-b border-slate-100">
           <h2 class="text-base font-bold text-slate-900">Send an Anonymous Note</h2>
-          <p class="text-xs text-slate-500 mt-0.5">The recipient will never know who wrote this.</p>
+          <p class="text-xs text-slate-500 mt-0.5">Share text, photos, or voice notes 100% untraceably.</p>
         </div>
 
         <form id="noteForm" class="flex flex-col gap-4">
@@ -94,24 +94,70 @@
             </div>
             <textarea 
               id="messageInput" 
-              required 
-              rows="4" 
+              rows="3" 
               maxlength="300"
               placeholder="Write your honest message here..." 
               class="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-900 focus:bg-white transition-all resize-none"
             ></textarea>
           </div>
 
-          <!-- Quick Prompt Helper -->
-          <div class="flex justify-end">
+          <!-- Hidden Image File Input -->
+          <input type="file" id="imageInput" accept="image/*" class="hidden">
+
+          <!-- Media Attachments Toolbar -->
+          <div class="flex items-center justify-between py-1 px-1 text-xs">
+            <div class="flex items-center gap-2">
+              <!-- Add Photo Button -->
+              <button type="button" id="triggerImageBtn" class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium flex items-center gap-1.5 transition-colors">
+                <i class="fa-regular fa-image text-slate-500"></i> Photo
+              </button>
+
+              <!-- Voice Record Button -->
+              <button type="button" id="recordVoiceBtn" class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium flex items-center gap-1.5 transition-colors">
+                <i class="fa-solid fa-microphone text-slate-500"></i> Voice Note
+              </button>
+            </div>
+
+            <!-- Quick Prompt Helper -->
             <button type="button" id="randomPromptBtn" class="text-xs text-slate-500 hover:text-slate-900 transition-colors flex items-center gap-1">
-              <i class="fa-regular fa-lightbulb"></i> Need a prompt?
+              <i class="fa-regular fa-lightbulb"></i> Prompt
+            </button>
+          </div>
+
+          <!-- Active Recording Bar (Hidden by default) -->
+          <div id="recordingBar" class="hidden items-center justify-between bg-red-50 border border-red-200 p-2.5 rounded-lg text-xs">
+            <div class="flex items-center gap-2 text-red-600 font-medium">
+              <span class="w-2.5 h-2.5 rounded-full bg-red-600 animate-pulse"></span>
+              <span>Recording... <span id="recordTimer" class="font-mono">0:00</span></span>
+            </div>
+            <button type="button" id="stopRecordBtn" class="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold">
+              Done
+            </button>
+          </div>
+
+          <!-- Attached Image Preview Container (Hidden by default) -->
+          <div id="imagePreviewContainer" class="hidden relative rounded-lg border border-slate-200 overflow-hidden bg-slate-100 max-h-48 flex items-center justify-center">
+            <img id="imagePreview" src="" alt="Attached preview" class="max-h-48 object-contain w-full">
+            <button type="button" id="removeImageBtn" class="absolute top-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs shadow-md">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <!-- Attached Audio Preview Container (Hidden by default) -->
+          <div id="audioPreviewContainer" class="hidden items-center justify-between bg-slate-100 p-2.5 rounded-lg border border-slate-200">
+            <div class="flex items-center gap-2 flex-1 mr-2">
+              <i class="fa-solid fa-waveform-lines text-slate-600"></i>
+              <audio id="audioPreview" controls class="w-full h-8"></audio>
+            </div>
+            <button type="button" id="removeAudioBtn" class="text-slate-400 hover:text-red-500 p-1">
+              <i class="fa-solid fa-trash-can text-xs"></i>
             </button>
           </div>
 
           <!-- Submit Button -->
           <button 
             type="submit" 
+            id="submitBtn"
             class="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.99]"
           >
             <i class="fa-solid fa-paper-plane text-xs"></i>
@@ -124,8 +170,8 @@
       <div class="bg-slate-100 border border-slate-200 rounded-xl p-4 flex items-start gap-3">
         <i class="fa-solid fa-shield text-slate-500 text-base mt-0.5"></i>
         <div class="text-xs text-slate-600 leading-relaxed">
-          <strong class="text-slate-800 block mb-0.5">Privacy First</strong>
-          No login needed. No IP addresses or device information are stored with the note.
+          <strong class="text-slate-800 block mb-0.5">Zero Metadata Stored</strong>
+          Audio files and photos have all EXIF metadata scrubbed. No identity or IP is attached to any media.
         </div>
       </div>
     </section>
@@ -170,19 +216,19 @@
 
       <!-- Note Cards Container -->
       <div id="notesContainer" class="flex flex-col gap-3 min-h-[300px]">
-        <!-- Cards dynamically injected by script.js -->
+        <!-- Injected dynamically -->
       </div>
     </section>
   </main>
 
-  <!-- Delete Confirmation Modal -->
+  <!-- Delete Modal -->
   <div id="deleteModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-    <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-sm w-full p-6 text-center transform transition-all">
+    <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-sm w-full p-6 text-center">
       <div class="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-4 text-xl">
         <i class="fa-solid fa-trash-can"></i>
       </div>
       <h3 class="text-base font-bold text-slate-900">Delete this note?</h3>
-      <p class="text-xs text-slate-500 mt-1">This action cannot be undone. The message will be permanently removed.</p>
+      <p class="text-xs text-slate-500 mt-1">This will permanently remove the message and attached media.</p>
       
       <div class="flex items-center justify-center gap-3 mt-6">
         <button id="cancelDeleteBtn" class="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg text-xs font-semibold hover:bg-slate-50 transition-colors w-1/2">
@@ -195,15 +241,13 @@
     </div>
   </div>
 
-  <!-- Notification Toast -->
+  <!-- Toast -->
   <div id="toast" class="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 text-xs font-medium translate-y-20 opacity-0 transition-all duration-200 pointer-events-none">
     <i id="toastIcon" class="fa-solid fa-check text-emerald-400"></i>
     <span id="toastMessage">Note sent successfully</span>
   </div>
 
-  <!-- Firebase Scripts (Must be above script.js) -->
-  <script type="module" src="script.js?v=5"></script>
-  <!-- Custom JavaScript -->
-  <script src="script.js"></script>
+  <!-- Single Modern ES Module Script -->
+  <script type="module" src="script.js?v=6"></script>
 </body>
 </html>
