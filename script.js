@@ -27,7 +27,72 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const notesRef = collection(db, "anonymous_notes");
 
-// 3. APP STATE
+// 3. SOUND SYNTHESIZER (Web Audio API - No external files needed)
+let audioCtx = null;
+
+function getAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+function playSound(type) {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    if (type === 'send') {
+      // Crisp swoosh / upward chime
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(420, now);
+      osc.frequency.exponentialRampToValueAtTime(840, now + 0.15);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.15);
+    } 
+    else if (type === 'pop') {
+      // Satisfying bubble-pop for heart/like
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(750, now);
+      osc.frequency.exponentialRampToValueAtTime(300, now + 0.08);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.08);
+    }
+    else if (type === 'delete') {
+      // Soft low thud
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.exponentialRampToValueAtTime(60, now + 0.12);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.12);
+    }
+  } catch (e) {
+    console.warn("Audio playback not supported or blocked by browser:", e);
+  }
+}
+
+// 4. APP STATE
 let allNotes = [];
 let sentNoteIds = JSON.parse(localStorage.getItem('ghostnote_my_sent_ids')) || [];
 let userLikedIds = new Set(JSON.parse(localStorage.getItem('ghostnote_likes')) || []);
@@ -51,7 +116,7 @@ const PROMPTS = [
   "A friendly reminder or encouraging word for the week:"
 ];
 
-// 4. DOM ELEMENTS
+// 5. DOM ELEMENTS
 const noteForm = document.getElementById('noteForm');
 const toInput = document.getElementById('toInput');
 const messageInput = document.getElementById('messageInput');
@@ -88,7 +153,7 @@ const audioPreviewContainer = document.getElementById('audioPreviewContainer');
 const audioPreview = document.getElementById('audioPreview');
 const removeAudioBtn = document.getElementById('removeAudioBtn');
 
-// 5. INITIALIZATION
+// 6. INITIALIZATION
 updateSentCounter();
 bindEvents();
 listenToLiveNotes();
@@ -148,7 +213,7 @@ function bindEvents() {
 }
 
 // ==========================================
-// 6. IMAGE COMPRESSION & ATTACHMENT
+// 7. IMAGE COMPRESSION & ATTACHMENT
 // ==========================================
 function handleImageSelection(e) {
   const file = e.target.files[0];
@@ -198,7 +263,7 @@ function clearImageAttachment() {
 }
 
 // ==========================================
-// 7. VOICE NOTE RECORDING (MediaRecorder API)
+// 8. VOICE NOTE RECORDING (MediaRecorder API)
 // ==========================================
 async function startAudioRecording() {
   try {
@@ -262,7 +327,7 @@ function clearAudioAttachment() {
 }
 
 // ==========================================
-// 8. SUBMIT NOTE (Text + Image + Audio)
+// 9. SUBMIT NOTE (With Send Sound)
 // ==========================================
 async function handleFormSubmit(e) {
   e.preventDefault();
@@ -296,6 +361,9 @@ async function handleFormSubmit(e) {
     sentNoteIds.unshift(docAdded.id);
     localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
 
+    // Play Send Sound
+    playSound('send');
+
     noteForm.reset();
     clearImageAttachment();
     clearAudioAttachment();
@@ -312,7 +380,7 @@ async function handleFormSubmit(e) {
 }
 
 // ==========================================
-// 9. GLOBAL ACTIONS (Reply, Delete Reply, Like, Delete Note)
+// 10. GLOBAL ACTIONS (Reply, Delete Reply, Like, Delete Note)
 // ==========================================
 window.toggleReplies = function(id) {
   if (openThreads.has(id)) {
@@ -341,6 +409,10 @@ window.submitReply = async function(noteId) {
         timestamp: Date.now()
       })
     });
+    
+    // Play Send Sound for Reply
+    playSound('send');
+
     openThreads.add(noteId);
     showToast('Reply posted!', 'fa-reply text-blue-400');
   } catch (err) {
@@ -348,7 +420,6 @@ window.submitReply = async function(noteId) {
   }
 };
 
-// DELETE SPECIFIC COMMENT / REPLY
 window.deleteReply = async function(noteId, replyId) {
   if (!confirm("Are you sure you want to delete this reply?")) return;
 
@@ -362,6 +433,8 @@ window.deleteReply = async function(noteId, replyId) {
     await updateDoc(noteDoc, {
       replies: updatedReplies
     });
+    // Play Delete Sound
+    playSound('delete');
     showToast('Reply deleted', 'fa-trash-can text-red-400');
   } catch (err) {
     console.error("Error deleting reply:", err);
@@ -370,6 +443,9 @@ window.deleteReply = async function(noteId, replyId) {
 };
 
 window.toggleLike = async function(id) {
+  // Play Pop Sound on Like
+  playSound('pop');
+
   const isLiked = userLikedIds.has(id);
   const noteDoc = doc(db, "anonymous_notes", id);
 
@@ -403,6 +479,10 @@ async function executeDelete() {
     await deleteDoc(doc(db, "anonymous_notes", noteToDeleteId));
     sentNoteIds = sentNoteIds.filter(id => id !== noteToDeleteId);
     localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
+    
+    // Play Delete Sound
+    playSound('delete');
+
     closeDeleteModal();
     updateSentCounter();
     showToast('Note deleted', 'fa-trash-can text-red-400');
@@ -420,7 +500,7 @@ window.copyNote = function(id) {
 };
 
 // ==========================================
-// 10. RENDER NOTES (With Photo, Audio, Replies & Delete Reply Button)
+// 11. RENDER NOTES (With Photo, Audio, Replies & Delete Buttons)
 // ==========================================
 function switchTab(tab) {
   activeTab = tab;
