@@ -1,4 +1,4 @@
-// 1. IMPORT FIREBASE (Modern CDN - No npm or bundling required)
+// 1. IMPORT FIREBASE (Including arrayUnion for nested replies)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { 
   getFirestore, 
@@ -8,7 +8,8 @@ import {
   doc, 
   updateDoc, 
   deleteDoc, 
-  increment 
+  increment,
+  arrayUnion 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 // 2. YOUR EXACT PROJECT KEYS
@@ -30,6 +31,7 @@ const notesRef = collection(db, "anonymous_notes");
 let allNotes = [];
 let sentNoteIds = JSON.parse(localStorage.getItem('ghostnote_my_sent_ids')) || [];
 let userLikedIds = new Set(JSON.parse(localStorage.getItem('ghostnote_likes')) || []);
+let openThreads = new Set(); // Tracks which reply drawers are currently toggled open
 let activeTab = 'wall';
 let currentCategory = 'Appreciation';
 let noteToDeleteId = null;
@@ -74,12 +76,11 @@ function listenToLiveNotes() {
     snapshot.forEach((docItem) => {
       allNotes.push({ id: docItem.id, ...docItem.data() });
     });
-    // Newest on top
+    // Newest first
     allNotes.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     renderNotes();
   }, (err) => {
     console.error("Firestore Listen Error:", err);
-    alert("Connection issue: " + err.message);
   });
 }
 
@@ -107,25 +108,18 @@ function bindEvents() {
   tabSentBtn.addEventListener('click', () => switchTab('sent'));
   searchInput.addEventListener('input', renderNotes);
   tagFilter.addEventListener('change', renderNotes);
-  
-  // Submit Listener
   noteForm.addEventListener('submit', handleFormSubmit);
 
   cancelDeleteBtn.addEventListener('click', closeDeleteModal);
   confirmDeleteBtn.addEventListener('click', executeDelete);
 }
 
-// 6. SUBMIT MESSAGE
+// 6. SUBMIT ORIGINAL NOTE
 async function handleFormSubmit(e) {
   e.preventDefault();
-  
   const to = toInput.value.trim();
   const body = messageInput.value.trim();
-
-  if (!to || !body) {
-    alert("Please fill in both fields");
-    return;
-  }
+  if (!to || !body) return;
 
   const submitButton = noteForm.querySelector('button[type="submit"]');
   submitButton.disabled = true;
@@ -137,7 +131,8 @@ async function handleFormSubmit(e) {
       body: body,
       category: currentCategory,
       timestamp: Date.now(),
-      likes: 0
+      likes: 0,
+      replies: [] // Initial empty thread
     });
 
     sentNoteIds.unshift(docAdded.id);
@@ -146,17 +141,55 @@ async function handleFormSubmit(e) {
     noteForm.reset();
     charCount.textContent = '0 / 300';
     updateSentCounter();
-    showToast('Note posted anonymously for everyone!', 'fa-check text-emerald-400');
+    showToast('Note posted anonymously!', 'fa-check text-emerald-400');
   } catch (error) {
     console.error("Save error:", error);
-    alert("Error saving note: " + error.message);
+    alert("Error: " + error.message);
   } finally {
     submitButton.disabled = false;
     submitButton.innerHTML = '<i class="fa-solid fa-paper-plane text-xs mr-2"></i>Post Note';
   }
 }
 
-// Make functions globally available for card onclick attributes
+// 7. REPLY ACTIONS (Global)
+window.toggleReplies = function(id) {
+  if (openThreads.has(id)) {
+    openThreads.delete(id);
+  } else {
+    openThreads.add(id);
+  }
+  renderNotes();
+};
+
+window.submitReply = async function(noteId) {
+  const inputEl = document.getElementById(`reply-input-${noteId}`);
+  const replyText = inputEl.value.trim();
+  if (!replyText) return;
+
+  const replyBtn = document.getElementById(`reply-btn-${noteId}`);
+  replyBtn.disabled = true;
+  replyBtn.innerText = "...";
+
+  try {
+    const noteDoc = doc(db, "anonymous_notes", noteId);
+    // Add anonymous reply without any user identifiers
+    await updateDoc(noteDoc, {
+      replies: arrayUnion({
+        id: 'rep_' + Date.now(),
+        text: replyText,
+        timestamp: Date.now()
+      })
+    });
+
+    // Make sure thread stays expanded
+    openThreads.add(noteId);
+    showToast('Anonymous reply posted!', 'fa-reply text-blue-400');
+  } catch (err) {
+    console.error("Reply error:", err);
+    alert("Could not post reply: " + err.message);
+  }
+};
+
 window.toggleLike = async function(id) {
   const isLiked = userLikedIds.has(id);
   const noteDoc = doc(db, "anonymous_notes", id);
@@ -187,7 +220,6 @@ function closeDeleteModal() {
 
 async function executeDelete() {
   if (!noteToDeleteId) return;
-
   try {
     await deleteDoc(doc(db, "anonymous_notes", noteToDeleteId));
     sentNoteIds = sentNoteIds.filter(id => id !== noteToDeleteId);
@@ -196,7 +228,6 @@ async function executeDelete() {
     updateSentCounter();
     showToast('Note permanently deleted', 'fa-trash-can text-red-400');
   } catch (err) {
-    console.error("Delete error:", err);
     alert("Delete failed: " + err.message);
   }
 }
@@ -209,7 +240,7 @@ window.copyNote = function(id) {
   });
 };
 
-// 7. RENDER
+// 8. RENDER NOTES & INLINE THREADS
 function switchTab(tab) {
   activeTab = tab;
   if (tab === 'wall') {
@@ -244,8 +275,8 @@ function renderNotes() {
     notesContainer.innerHTML = `
       <div class="text-center py-16 bg-white border border-slate-200 rounded-xl">
         <i class="fa-regular fa-comment-dots text-3xl text-slate-300 mb-2"></i>
-        <p class="text-sm font-semibold text-slate-700">No notes yet</p>
-        <p class="text-xs text-slate-400 mt-0.5">Send a message to see it appear for everyone!</p>
+        <p class="text-sm font-semibold text-slate-700">No notes found</p>
+        <p class="text-xs text-slate-400 mt-0.5">Be the first to share an anonymous note!</p>
       </div>
     `;
     return;
@@ -255,9 +286,26 @@ function renderNotes() {
     const isLiked = userLikedIds.has(item.id);
     const timeFormatted = formatTimeAgo(item.timestamp);
     const badgeStyle = getCategoryBadgeStyle(item.category);
+    const replies = item.replies || [];
+    const isThreadOpen = openThreads.has(item.id);
+
+    // Build the list of replies for this card
+    const repliesListHtml = replies.map(r => `
+      <div class="flex items-start gap-2.5 bg-slate-50 p-2.5 rounded-lg border border-slate-200/70 text-xs">
+        <i class="fa-solid fa-user-secret text-slate-400 text-sm mt-0.5"></i>
+        <div class="flex-1">
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-semibold text-slate-700 text-[11px]">Anonymous</span>
+            <span class="text-[10px] text-slate-400">${formatTimeAgo(r.timestamp)}</span>
+          </div>
+          <p class="text-slate-600 leading-relaxed">${escapeHtml(r.text)}</p>
+        </div>
+      </div>
+    `).join('');
 
     return `
       <article class="note-card flex flex-col gap-3">
+        <!-- Card Header -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-1.5">
             <span class="text-xs font-semibold text-slate-400 uppercase">To:</span>
@@ -273,14 +321,18 @@ function renderNotes() {
           </div>
         </div>
 
+        <!-- Note Text -->
         <p class="text-sm text-slate-700 leading-normal break-words">
           ${escapeHtml(item.body || '')}
         </p>
 
+        <!-- Action Bar -->
         <div class="flex items-center justify-between pt-2 border-t border-slate-100 text-xs text-slate-500">
-          <span class="flex items-center gap-1 text-[11px] text-slate-400">
-            <i class="fa-solid fa-lock text-[10px]"></i> Sent anonymously
-          </span>
+          <!-- Reply Drawer Toggle Button -->
+          <button onclick="toggleReplies('${item.id}')" class="flex items-center gap-1.5 hover:text-slate-900 transition-colors font-medium">
+            <i class="fa-regular fa-comment-dots"></i>
+            <span>${replies.length > 0 ? `${replies.length}${replies.length === 1 ? 'Reply' : 'Replies'}` : 'Reply'}</span>
+          </button>
 
           <div class="flex items-center gap-3">
             <button onclick="copyNote('${item.id}')" title="Copy text" class="hover:text-slate-800 transition-colors">
@@ -292,6 +344,31 @@ function renderNotes() {
             </button>
             <button onclick="promptDelete('${item.id}')" title="Delete note" class="text-slate-400 hover:text-red-500 transition-colors">
               <i class="fa-regular fa-trash-can"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Inline Anonymous Reply Section (Collapsible) -->
+        <div class="${isThreadOpen ? 'block' : 'hidden'} mt-1 pt-3 border-t border-slate-100 flex flex-col gap-2.5">
+          ${replies.length > 0 ? `<div class="flex flex-col gap-2 max-h-52 overflow-y-auto pr-1">${repliesListHtml}</div>` : `<p class="text-[11px] text-slate-400 italic">No replies yet. Be the first to answer anonymously!</p>`}
+          
+          <!-- Reply Input Bar -->
+          <div class="flex items-center gap-2 mt-1">
+            <input 
+              type="text" 
+              id="reply-input-${item.id}"
+              maxlength="180"
+              placeholder="Reply anonymously..." 
+              onkeydown="if(event.key === 'Enter') submitReply('${item.id}')"
+              class="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-900 focus:bg-white transition-all"
+            />
+            <button 
+              id="reply-btn-${item.id}"
+              onclick="submitReply('${item.id}')"
+              class="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors active:scale-95"
+            >
+              <i class="fa-solid fa-paper-plane text-[10px]"></i>
+              <span>Send</span>
             </button>
           </div>
         </div>
