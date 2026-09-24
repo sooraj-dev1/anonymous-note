@@ -1,6 +1,4 @@
-// ==========================================
-// 1. FIREBASE CONFIGURATION
-// ==========================================
+// 1. YOUR FIREBASE KEYS
 const firebaseConfig = {
   apiKey: "AIzaSyAmW2SyWApb2Wk9yvTLi9EE8IIeTqwVTic",
   authDomain: "ghostnote-app.firebaseapp.com",
@@ -10,10 +8,20 @@ const firebaseConfig = {
   appId: "1:563426492631:web:93ca529be4391c9585b092"
 };
 
-// Initialize Firebase & Firestore
-firebase.initializeApp(firebaseConfig);
+// Initialize Firebase
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
 const db = firebase.firestore();
 const notesCollection = db.collection("anonymous_notes");
+
+// 2. STATE
+let allNotes = [];
+let sentNoteIds = JSON.parse(localStorage.getItem('ghostnote_my_sent_ids')) || [];
+let userLikedIds = new Set(JSON.parse(localStorage.getItem('ghostnote_likes')) || []);
+let activeTab = 'wall';
+let currentCategory = 'Appreciation';
+let noteToDeleteId = null;
 
 const PROMPTS = [
   "What is one piece of feedback you've been hesitant to share?",
@@ -22,15 +30,7 @@ const PROMPTS = [
   "A friendly reminder or encouraging word for the week:"
 ];
 
-// App State
-let notes = JSON.parse(localStorage.getItem('ghostnote_feed')) || DEFAULT_NOTES;
-let sentNotes = JSON.parse(localStorage.getItem('ghostnote_sent')) || [];
-let activeTab = 'wall'; // 'wall' or 'sent'
-let currentCategory = 'Appreciation';
-let userLikedIds = new Set(JSON.parse(localStorage.getItem('ghostnote_likes')) || []);
-let noteToDeleteId = null;
-
-// DOM Elements
+// 3. DOM ELEMENTS
 const noteForm = document.getElementById('noteForm');
 const toInput = document.getElementById('toInput');
 const messageInput = document.getElementById('messageInput');
@@ -45,29 +45,43 @@ const tabSentBtn = document.getElementById('tabSentBtn');
 const sentCount = document.getElementById('sentCount');
 const noteCountBadge = document.getElementById('noteCountBadge');
 const feedHeading = document.getElementById('feedHeading');
+const submitBtn = document.getElementById('submitBtn');
+const submitBtnText = document.getElementById('submitBtnText');
 const toast = document.getElementById('toast');
 const toastIcon = document.getElementById('toastIcon');
 const toastMessage = document.getElementById('toastMessage');
-
-// Modal Elements
 const deleteModal = document.getElementById('deleteModal');
 const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
 const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
 
-// Initial Setup
+// 4. LISTEN FOR MESSAGES (Real-time sync)
 document.addEventListener('DOMContentLoaded', () => {
   updateSentCounter();
-  renderNotes();
   bindEvents();
+  listenToLiveNotes();
 });
 
+function listenToLiveNotes() {
+  // Direct listener without complex query indexes so it works 100% reliably
+  notesCollection.onSnapshot((snapshot) => {
+    allNotes = [];
+    snapshot.forEach(doc => {
+      allNotes.push({ id: doc.id, ...doc.data() });
+    });
+    // Sort in memory by timestamp newest first
+    allNotes.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    renderNotes();
+  }, (error) => {
+    console.error("Firestore sync error:", error);
+    showToast("Error connecting to database", "fa-triangle-exclamation text-amber-400");
+  });
+}
+
 function bindEvents() {
-  // Character counter
   messageInput.addEventListener('input', () => {
     charCount.textContent = `${messageInput.value.length} / 300`;
   });
 
-  // Category tags selection
   categoryGroup.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => {
       categoryGroup.querySelectorAll('button').forEach(b => b.classList.remove('active'));
@@ -76,7 +90,6 @@ function bindEvents() {
     });
   });
 
-  // Prompt helper
   randomPromptBtn.addEventListener('click', () => {
     const random = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
     messageInput.value = random + " ";
@@ -84,55 +97,98 @@ function bindEvents() {
     charCount.textContent = `${messageInput.value.length} / 300`;
   });
 
-  // Tabs
   tabWallBtn.addEventListener('click', () => switchTab('wall'));
   tabSentBtn.addEventListener('click', () => switchTab('sent'));
-
-  // Search & Filter
   searchInput.addEventListener('input', renderNotes);
   tagFilter.addEventListener('change', renderNotes);
-
-  // Form Submission
   noteForm.addEventListener('submit', handleFormSubmit);
 
-  // Delete Modal Actions
   cancelDeleteBtn.addEventListener('click', closeDeleteModal);
   confirmDeleteBtn.addEventListener('click', executeDelete);
 }
 
-// Form Submit Handler
-function handleFormSubmit(e) {
+// 5. POST A NOTE
+async function handleFormSubmit(e) {
   e.preventDefault();
-
   const to = toInput.value.trim();
   const body = messageInput.value.trim();
-
   if (!to || !body) return;
 
-  const newNote = {
-    id: 'n-' + Date.now(),
-    to: to,
-    body: body,
-    category: currentCategory,
-    timestamp: Date.now(),
-    likes: 0
-  };
+  submitBtn.disabled = true;
+  submitBtnText.textContent = "Posting...";
 
-  notes.unshift(newNote);
-  sentNotes.unshift(newNote);
+  try {
+    const docRef = await notesCollection.add({
+      to: to,
+      body: body,
+      category: currentCategory,
+      timestamp: Date.now(),
+      likes: 0
+    });
 
-  localStorage.setItem('ghostnote_feed', JSON.stringify(notes));
-  localStorage.setItem('ghostnote_sent', JSON.stringify(sentNotes));
+    sentNoteIds.unshift(docRef.id);
+    localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
 
-  noteForm.reset();
-  charCount.textContent = '0 / 300';
-  updateSentCounter();
-  renderNotes();
-
-  showToast('Note posted anonymously', 'fa-check text-emerald-400');
+    noteForm.reset();
+    charCount.textContent = '0 / 300';
+    updateSentCounter();
+    showToast('Note posted anonymously for everyone!', 'fa-check text-emerald-400');
+  } catch (err) {
+    console.error("Post error:", err);
+    alert("Could not post message: " + err.message);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtnText.textContent = "Post Note";
+  }
 }
 
-// Switch Feed View
+// 6. LIKE & DELETE ACTIONS
+async function toggleLike(id) {
+  const noteRef = notesCollection.doc(id);
+  const isLiked = userLikedIds.has(id);
+
+  try {
+    if (isLiked) {
+      userLikedIds.delete(id);
+      await noteRef.update({ likes: firebase.firestore.FieldValue.increment(-1) });
+    } else {
+      userLikedIds.add(id);
+      await noteRef.update({ likes: firebase.firestore.FieldValue.increment(1) });
+    }
+    localStorage.setItem('ghostnote_likes', JSON.stringify(Array.from(userLikedIds)));
+  } catch (err) {
+    console.error("Like error:", err);
+  }
+}
+
+function promptDelete(id) {
+  noteToDeleteId = id;
+  deleteModal.classList.remove('hidden');
+}
+
+function closeDeleteModal() {
+  noteToDeleteId = null;
+  deleteModal.classList.add('hidden');
+}
+
+async function executeDelete() {
+  if (!noteToDeleteId) return;
+
+  try {
+    await notesCollection.doc(noteToDeleteId).delete();
+    sentNoteIds = sentNoteIds.filter(id => id !== noteToDeleteId);
+    localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
+
+    closeDeleteModal();
+    updateSentCounter();
+    showToast('Note permanently deleted', 'fa-trash-can text-red-400');
+  } catch (err) {
+    console.error("Delete error:", err);
+    showToast('Failed to delete note', 'fa-xmark text-red-400');
+  }
+}
+
+// 7. RENDER UI
 function switchTab(tab) {
   activeTab = tab;
   if (tab === 'wall') {
@@ -147,9 +203,11 @@ function switchTab(tab) {
   renderNotes();
 }
 
-// Render Notes (Includes Delete / Trash icon on every card)
 function renderNotes() {
-  const currentList = activeTab === 'wall' ? notes : sentNotes;
+  const currentList = activeTab === 'wall' 
+    ? allNotes 
+    : allNotes.filter(n => sentNoteIds.includes(n.id));
+
   const search = searchInput.value.toLowerCase();
   const filter = tagFilter.value;
 
@@ -165,8 +223,8 @@ function renderNotes() {
     notesContainer.innerHTML = `
       <div class="text-center py-16 bg-white border border-slate-200 rounded-xl">
         <i class="fa-regular fa-comment-dots text-3xl text-slate-300 mb-2"></i>
-        <p class="text-sm font-semibold text-slate-700">No notes found</p>
-        <p class="text-xs text-slate-400 mt-0.5">Try changing your search term or tag filter.</p>
+        <p class="text-sm font-semibold text-slate-700">No notes yet</p>
+        <p class="text-xs text-slate-400 mt-0.5">Send a message to see it appear for everyone!</p>
       </div>
     `;
     return;
@@ -178,7 +236,7 @@ function renderNotes() {
     const badgeStyle = getCategoryBadgeStyle(item.category);
 
     return `
-      <article class="note-card flex flex-col gap-3" id="card-${item.id}">
+      <article class="note-card flex flex-col gap-3">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-1.5">
             <span class="text-xs font-semibold text-slate-400 uppercase">To:</span>
@@ -204,18 +262,13 @@ function renderNotes() {
           </span>
 
           <div class="flex items-center gap-3">
-            <!-- Copy Action -->
             <button onclick="copyNote('${item.id}')" title="Copy text" class="hover:text-slate-800 transition-colors">
               <i class="fa-regular fa-copy"></i>
             </button>
-
-            <!-- Like Action -->
             <button onclick="toggleLike('${item.id}')" class="flex items-center gap-1 transition-colors ${isLiked ? 'text-red-500 font-semibold' : 'hover:text-slate-800'}">
               <i class="${isLiked ? 'fa-solid' : 'fa-regular'} fa-heart"></i>
               <span>${item.likes || 0}</span>
             </button>
-
-            <!-- Trash / Delete Action on Every Card -->
             <button onclick="promptDelete('${item.id}')" title="Delete note" class="text-slate-400 hover:text-red-500 transition-colors">
               <i class="fa-regular fa-trash-can"></i>
             </button>
@@ -226,66 +279,16 @@ function renderNotes() {
   }).join('');
 }
 
-// --- Delete Handlers ---
-function promptDelete(id) {
-  noteToDeleteId = id;
-  deleteModal.classList.remove('hidden');
-}
-
-function closeDeleteModal() {
-  noteToDeleteId = null;
-  deleteModal.classList.add('hidden');
-}
-
-function executeDelete() {
-  if (!noteToDeleteId) return;
-
-  // Remove from both lists
-  notes = notes.filter(n => n.id !== noteToDeleteId);
-  sentNotes = sentNotes.filter(n => n.id !== noteToDeleteId);
-
-  // Sync with LocalStorage
-  localStorage.setItem('ghostnote_feed', JSON.stringify(notes));
-  localStorage.setItem('ghostnote_sent', JSON.stringify(sentNotes));
-
-  closeDeleteModal();
-  updateSentCounter();
-  renderNotes();
-
-  showToast('Note permanently deleted', 'fa-trash-can text-red-400');
-}
-
-// Like Handler
-function toggleLike(id) {
-  const target = notes.find(n => n.id === id);
-  if (!target) return;
-
-  if (userLikedIds.has(id)) {
-    userLikedIds.delete(id);
-    target.likes = Math.max(0, (target.likes || 1) - 1);
-  } else {
-    userLikedIds.add(id);
-    target.likes = (target.likes || 0) + 1;
-  }
-
-  localStorage.setItem('ghostnote_likes', JSON.stringify(Array.from(userLikedIds)));
-  localStorage.setItem('ghostnote_feed', JSON.stringify(notes));
-  renderNotes();
-}
-
-// Copy Note Content
 function copyNote(id) {
-  const note = notes.find(n => n.id === id);
+  const note = allNotes.find(n => n.id === id);
   if (!note) return;
-
   navigator.clipboard.writeText(`"${note.body}" — To: ${note.to}`).then(() => {
     showToast('Copied to clipboard', 'fa-check text-emerald-400');
   });
 }
 
-// UI Helpers
 function updateSentCounter() {
-  sentCount.textContent = sentNotes.length;
+  sentCount.textContent = sentNoteIds.length;
 }
 
 function getCategoryBadgeStyle(cat) {
