@@ -99,7 +99,7 @@ function listenToLiveNotes() {
     snapshot.forEach((docItem) => {
       allNotes.push({ id: docItem.id, ...docItem.data() });
     });
-    // Sort in memory by timestamp newest first
+    // Sort newest notes first
     allNotes.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     renderNotes();
   }, (err) => {
@@ -158,7 +158,6 @@ function handleImageSelection(e) {
   reader.onload = (event) => {
     const img = new Image();
     img.onload = () => {
-      // Compress and resize image so it fits comfortably in Firestore (under 100 KB)
       const canvas = document.createElement('canvas');
       const MAX_WIDTH = 640;
       const MAX_HEIGHT = 640;
@@ -182,7 +181,6 @@ function handleImageSelection(e) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
 
-      // Export as compact JPEG
       attachedImageBase64 = canvas.toDataURL('image/jpeg', 0.65);
       imagePreview.src = attachedImageBase64;
       imagePreviewContainer.classList.remove('hidden');
@@ -222,7 +220,6 @@ async function startAudioRecording() {
       };
       reader.readAsDataURL(audioBlob);
 
-      // Stop all microphone audio tracks
       stream.getTracks().forEach(track => track.stop());
     };
 
@@ -239,7 +236,6 @@ async function startAudioRecording() {
       const secs = recordSeconds % 60;
       recordTimer.textContent = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 
-      // Max 20-second voice note limit (keeps files small)
       if (recordSeconds >= 20) {
         stopAudioRecording();
       }
@@ -273,7 +269,6 @@ async function handleFormSubmit(e) {
   const to = toInput.value.trim();
   const body = messageInput.value.trim();
 
-  // A note must have either text, an image, or a voice note
   if (!to || (!body && !attachedImageBase64 && !attachedAudioBase64)) {
     alert("Please write a message or attach a photo/voice note!");
     return;
@@ -293,7 +288,6 @@ async function handleFormSubmit(e) {
       replies: []
     };
 
-    // Attach media if present
     if (attachedImageBase64) docData.image = attachedImageBase64;
     if (attachedAudioBase64) docData.audio = attachedAudioBase64;
 
@@ -302,7 +296,6 @@ async function handleFormSubmit(e) {
     sentNoteIds.unshift(docAdded.id);
     localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
 
-    // Reset Form & Attachments
     noteForm.reset();
     clearImageAttachment();
     clearAudioAttachment();
@@ -319,7 +312,7 @@ async function handleFormSubmit(e) {
 }
 
 // ==========================================
-// 9. GLOBAL ACTIONS (Reply, Like, Delete, Copy)
+// 9. GLOBAL ACTIONS (Reply, Delete Reply, Like, Delete Note)
 // ==========================================
 window.toggleReplies = function(id) {
   if (openThreads.has(id)) {
@@ -352,6 +345,27 @@ window.submitReply = async function(noteId) {
     showToast('Reply posted!', 'fa-reply text-blue-400');
   } catch (err) {
     alert("Could not post reply: " + err.message);
+  }
+};
+
+// DELETE SPECIFIC COMMENT / REPLY
+window.deleteReply = async function(noteId, replyId) {
+  if (!confirm("Are you sure you want to delete this reply?")) return;
+
+  const note = allNotes.find(n => n.id === noteId);
+  if (!note || !note.replies) return;
+
+  const updatedReplies = note.replies.filter(r => r.id !== replyId);
+
+  try {
+    const noteDoc = doc(db, "anonymous_notes", noteId);
+    await updateDoc(noteDoc, {
+      replies: updatedReplies
+    });
+    showToast('Reply deleted', 'fa-trash-can text-red-400');
+  } catch (err) {
+    console.error("Error deleting reply:", err);
+    alert("Could not delete reply: " + err.message);
   }
 };
 
@@ -406,7 +420,7 @@ window.copyNote = function(id) {
 };
 
 // ==========================================
-// 10. RENDER NOTES (With Photo & Audio Player)
+// 10. RENDER NOTES (With Photo, Audio, Replies & Delete Reply Button)
 // ==========================================
 function switchTab(tab) {
   activeTab = tab;
@@ -456,14 +470,14 @@ function renderNotes() {
     const replies = item.replies || [];
     const isThreadOpen = openThreads.has(item.id);
 
-    // Render photo element if attached
+    // Attached image
     const imageHtml = item.image ? `
       <div class="rounded-lg overflow-hidden border border-slate-200 bg-slate-100 max-h-64 flex items-center justify-center mt-1">
         <img src="${item.image}" alt="Attached media" class="w-full max-h-64 object-contain">
       </div>
     ` : '';
 
-    // Render audio player element if attached
+    // Attached audio player
     const audioHtml = item.audio ? `
       <div class="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200/80 mt-1">
         <i class="fa-solid fa-microphone-lines text-slate-500 text-sm ml-1"></i>
@@ -471,14 +485,24 @@ function renderNotes() {
       </div>
     ` : '';
 
-    // Render replies thread
+    // Replies thread containing individual delete buttons
     const repliesListHtml = replies.map(r => `
-      <div class="flex items-start gap-2.5 bg-slate-50 p-2.5 rounded-lg border border-slate-200/70 text-xs">
+      <div class="flex items-start gap-2.5 bg-slate-50 p-2.5 rounded-lg border border-slate-200/70 text-xs group">
         <i class="fa-solid fa-user-secret text-slate-400 text-sm mt-0.5"></i>
         <div class="flex-1">
           <div class="flex items-center justify-between mb-1">
-            <span class="font-semibold text-slate-700 text-[11px]">Anonymous</span>
-            <span class="text-[10px] text-slate-400">${formatTimeAgo(r.timestamp)}</span>
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-slate-700 text-[11px]">Anonymous</span>
+              <span class="text-[10px] text-slate-400">${formatTimeAgo(r.timestamp)}</span>
+            </div>
+            <!-- Delete reply button -->
+            <button 
+              onclick="deleteReply('${item.id}', '${r.id}')" 
+              title="Delete reply" 
+              class="text-slate-400 hover:text-red-500 transition-colors p-0.5"
+            >
+              <i class="fa-regular fa-trash-can text-[11px]"></i>
+            </button>
           </div>
           <p class="text-slate-600 leading-relaxed">${escapeHtml(r.text)}</p>
         </div>
