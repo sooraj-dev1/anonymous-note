@@ -1,4 +1,17 @@
-// 1. YOUR FIREBASE KEYS
+// 1. IMPORT FIREBASE (Modern CDN - No npm or bundling required)
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  onSnapshot, 
+  doc, 
+  updateDoc, 
+  deleteDoc, 
+  increment 
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+// 2. YOUR EXACT PROJECT KEYS
 const firebaseConfig = {
   apiKey: "AIzaSyAmW2SyWApb2Wk9yvTLi9EE8IIeTqwVTic",
   authDomain: "ghostnote-app.firebaseapp.com",
@@ -9,13 +22,11 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-if (!firebase.apps.length) {
-  firebase.initializeApp(firebaseConfig);
-}
-const db = firebase.firestore();
-const notesCollection = db.collection("anonymous_notes");
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const notesRef = collection(db, "anonymous_notes");
 
-// 2. STATE
+// 3. STATE
 let allNotes = [];
 let sentNoteIds = JSON.parse(localStorage.getItem('ghostnote_my_sent_ids')) || [];
 let userLikedIds = new Set(JSON.parse(localStorage.getItem('ghostnote_likes')) || []);
@@ -30,7 +41,7 @@ const PROMPTS = [
   "A friendly reminder or encouraging word for the week:"
 ];
 
-// 3. DOM ELEMENTS
+// 4. DOM ELEMENTS
 const noteForm = document.getElementById('noteForm');
 const toInput = document.getElementById('toInput');
 const messageInput = document.getElementById('messageInput');
@@ -45,8 +56,6 @@ const tabSentBtn = document.getElementById('tabSentBtn');
 const sentCount = document.getElementById('sentCount');
 const noteCountBadge = document.getElementById('noteCountBadge');
 const feedHeading = document.getElementById('feedHeading');
-const submitBtn = document.getElementById('submitBtn');
-const submitBtnText = document.getElementById('submitBtnText');
 const toast = document.getElementById('toast');
 const toastIcon = document.getElementById('toastIcon');
 const toastMessage = document.getElementById('toastMessage');
@@ -54,26 +63,23 @@ const deleteModal = document.getElementById('deleteModal');
 const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
 const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
 
-// 4. LISTEN FOR MESSAGES (Real-time sync)
-document.addEventListener('DOMContentLoaded', () => {
-  updateSentCounter();
-  bindEvents();
-  listenToLiveNotes();
-});
+// 5. INITIALIZE & LISTEN REAL-TIME
+updateSentCounter();
+bindEvents();
+listenToLiveNotes();
 
 function listenToLiveNotes() {
-  // Direct listener without complex query indexes so it works 100% reliably
-  notesCollection.onSnapshot((snapshot) => {
+  onSnapshot(notesRef, (snapshot) => {
     allNotes = [];
-    snapshot.forEach(doc => {
-      allNotes.push({ id: doc.id, ...doc.data() });
+    snapshot.forEach((docItem) => {
+      allNotes.push({ id: docItem.id, ...docItem.data() });
     });
-    // Sort in memory by timestamp newest first
+    // Newest on top
     allNotes.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     renderNotes();
-  }, (error) => {
-    console.error("Firestore sync error:", error);
-    showToast("Error connecting to database", "fa-triangle-exclamation text-amber-400");
+  }, (err) => {
+    console.error("Firestore Listen Error:", err);
+    alert("Connection issue: " + err.message);
   });
 }
 
@@ -101,24 +107,32 @@ function bindEvents() {
   tabSentBtn.addEventListener('click', () => switchTab('sent'));
   searchInput.addEventListener('input', renderNotes);
   tagFilter.addEventListener('change', renderNotes);
+  
+  // Submit Listener
   noteForm.addEventListener('submit', handleFormSubmit);
 
   cancelDeleteBtn.addEventListener('click', closeDeleteModal);
   confirmDeleteBtn.addEventListener('click', executeDelete);
 }
 
-// 5. POST A NOTE
+// 6. SUBMIT MESSAGE
 async function handleFormSubmit(e) {
   e.preventDefault();
+  
   const to = toInput.value.trim();
   const body = messageInput.value.trim();
-  if (!to || !body) return;
 
-  submitBtn.disabled = true;
-  submitBtnText.textContent = "Posting...";
+  if (!to || !body) {
+    alert("Please fill in both fields");
+    return;
+  }
+
+  const submitButton = noteForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  submitButton.innerText = "Posting...";
 
   try {
-    const docRef = await notesCollection.add({
+    const docAdded = await addDoc(notesRef, {
       to: to,
       body: body,
       category: currentCategory,
@@ -126,45 +140,45 @@ async function handleFormSubmit(e) {
       likes: 0
     });
 
-    sentNoteIds.unshift(docRef.id);
+    sentNoteIds.unshift(docAdded.id);
     localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
 
     noteForm.reset();
     charCount.textContent = '0 / 300';
     updateSentCounter();
     showToast('Note posted anonymously for everyone!', 'fa-check text-emerald-400');
-  } catch (err) {
-    console.error("Post error:", err);
-    alert("Could not post message: " + err.message);
+  } catch (error) {
+    console.error("Save error:", error);
+    alert("Error saving note: " + error.message);
   } finally {
-    submitBtn.disabled = false;
-    submitBtnText.textContent = "Post Note";
+    submitButton.disabled = false;
+    submitButton.innerHTML = '<i class="fa-solid fa-paper-plane text-xs mr-2"></i>Post Note';
   }
 }
 
-// 6. LIKE & DELETE ACTIONS
-async function toggleLike(id) {
-  const noteRef = notesCollection.doc(id);
+// Make functions globally available for card onclick attributes
+window.toggleLike = async function(id) {
   const isLiked = userLikedIds.has(id);
+  const noteDoc = doc(db, "anonymous_notes", id);
 
   try {
     if (isLiked) {
       userLikedIds.delete(id);
-      await noteRef.update({ likes: firebase.firestore.FieldValue.increment(-1) });
+      await updateDoc(noteDoc, { likes: increment(-1) });
     } else {
       userLikedIds.add(id);
-      await noteRef.update({ likes: firebase.firestore.FieldValue.increment(1) });
+      await updateDoc(noteDoc, { likes: increment(1) });
     }
     localStorage.setItem('ghostnote_likes', JSON.stringify(Array.from(userLikedIds)));
   } catch (err) {
     console.error("Like error:", err);
   }
-}
+};
 
-function promptDelete(id) {
+window.promptDelete = function(id) {
   noteToDeleteId = id;
   deleteModal.classList.remove('hidden');
-}
+};
 
 function closeDeleteModal() {
   noteToDeleteId = null;
@@ -175,20 +189,27 @@ async function executeDelete() {
   if (!noteToDeleteId) return;
 
   try {
-    await notesCollection.doc(noteToDeleteId).delete();
+    await deleteDoc(doc(db, "anonymous_notes", noteToDeleteId));
     sentNoteIds = sentNoteIds.filter(id => id !== noteToDeleteId);
     localStorage.setItem('ghostnote_my_sent_ids', JSON.stringify(sentNoteIds));
-
     closeDeleteModal();
     updateSentCounter();
     showToast('Note permanently deleted', 'fa-trash-can text-red-400');
   } catch (err) {
     console.error("Delete error:", err);
-    showToast('Failed to delete note', 'fa-xmark text-red-400');
+    alert("Delete failed: " + err.message);
   }
 }
 
-// 7. RENDER UI
+window.copyNote = function(id) {
+  const note = allNotes.find(n => n.id === id);
+  if (!note) return;
+  navigator.clipboard.writeText(`"${note.body}" — To: ${note.to}`).then(() => {
+    showToast('Copied to clipboard', 'fa-check text-emerald-400');
+  });
+};
+
+// 7. RENDER
 function switchTab(tab) {
   activeTab = tab;
   if (tab === 'wall') {
@@ -212,7 +233,7 @@ function renderNotes() {
   const filter = tagFilter.value;
 
   const filtered = currentList.filter(item => {
-    const matchSearch = item.to.toLowerCase().includes(search) || item.body.toLowerCase().includes(search);
+    const matchSearch = item.to?.toLowerCase().includes(search) || item.body?.toLowerCase().includes(search);
     const matchFilter = (filter === 'All') || (item.category === filter);
     return matchSearch && matchFilter;
   });
@@ -241,19 +262,19 @@ function renderNotes() {
           <div class="flex items-center gap-1.5">
             <span class="text-xs font-semibold text-slate-400 uppercase">To:</span>
             <span class="text-xs font-semibold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
-              ${escapeHtml(item.to)}
+              ${escapeHtml(item.to || '')}
             </span>
           </div>
           <div class="flex items-center gap-2">
             <span class="text-[11px] font-medium px-2 py-0.5 rounded-full border ${badgeStyle}">
-              ${item.category}
+              ${item.category || 'Note'}
             </span>
             <span class="text-[11px] text-slate-400">${timeFormatted}</span>
           </div>
         </div>
 
         <p class="text-sm text-slate-700 leading-normal break-words">
-          ${escapeHtml(item.body)}
+          ${escapeHtml(item.body || '')}
         </p>
 
         <div class="flex items-center justify-between pt-2 border-t border-slate-100 text-xs text-slate-500">
@@ -279,14 +300,6 @@ function renderNotes() {
   }).join('');
 }
 
-function copyNote(id) {
-  const note = allNotes.find(n => n.id === id);
-  if (!note) return;
-  navigator.clipboard.writeText(`"${note.body}" — To: ${note.to}`).then(() => {
-    showToast('Copied to clipboard', 'fa-check text-emerald-400');
-  });
-}
-
 function updateSentCounter() {
   sentCount.textContent = sentNoteIds.length;
 }
@@ -303,6 +316,7 @@ function getCategoryBadgeStyle(cat) {
 }
 
 function formatTimeAgo(ts) {
+  if (!ts) return 'recently';
   const diff = Math.floor((Date.now() - ts) / (1000 * 60));
   if (diff < 1) return 'just now';
   if (diff < 60) return `${diff}m ago`;
