@@ -1,30 +1,19 @@
-// --- Seed Sample Data ---
-const DEFAULT_NOTES = [
-  {
-    id: "n-1",
-    to: "David (Frontend Dev)",
-    body: "Thanks for always stepping up during code reviews. Your suggestions genuinely make all of us write cleaner code!",
-    category: "Appreciation",
-    timestamp: Date.now() - 1000 * 60 * 25,
-    likes: 4
-  },
-  {
-    id: "n-2",
-    to: "Project Leads",
-    body: "Can we please have fewer 30-minute status meetings that could easily be handled with an asynchronous Slack post?",
-    category: "Feedback",
-    timestamp: Date.now() - 1000 * 60 * 85,
-    likes: 19
-  },
-  {
-    id: "n-3",
-    to: "New Interns",
-    body: "Never hesitate to ask basic questions. Everyone in this office was just as confused on their first week.",
-    category: "Advice",
-    timestamp: Date.now() - 1000 * 60 * 180,
-    likes: 8
-  }
-];
+// ==========================================
+// 1. FIREBASE CONFIGURATION
+// ==========================================
+const firebaseConfig = {
+  apiKey: "AIzaSyAmW2SyWApb2Wk9yvTLi9EE8IIeTqwVTic",
+  authDomain: "ghostnote-app.firebaseapp.com",
+  projectId: "ghostnote-app",
+  storageBucket: "ghostnote-app.firebasestorage.app",
+  messagingSenderId: "563426492631",
+  appId: "1:563426492631:web:93ca529be4391c9585b092"
+};
+
+// Initialize Firebase & Firestore
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const notesCollection = db.collection("anonymous_notes");
 
 const PROMPTS = [
   "What is one piece of feedback you've been hesitant to share?",
