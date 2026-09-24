@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GhostNote — Honest Anonymous Notes</title>
+
+  <!-- Tailwind CSS & FontAwesome Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
+
+  <!-- Minimal Standard Header -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-base shadow-sm">
+          <i class="fa-solid fa-feather-pointed"></i>
+        </div>
+        <div>
+          <span class="font-bold text-lg text-slate-900 tracking-tight">GhostNote</span>
+          <span class="text-[11px] text-slate-500 font-medium block -mt-1">Honest & Anonymous</span>
+        </div>
+      </div>
+
+      <!-- Navigation Switcher -->
+      <nav class="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-semibold">
+        <button id="tabWallBtn" class="px-3.5 py-1.5 rounded-md bg-white text-slate-900 shadow-sm transition-all flex items-center gap-1.5">
+          <i class="fa-solid fa-list-ul text-slate-600"></i> Public Feed
+        </button>
+        <button id="tabSentBtn" class="px-3.5 py-1.5 rounded-md text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5">
+          <i class="fa-solid fa-paper-plane text-slate-400"></i> Sent by Me (<span id="sentCount">0</span>)
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-6xl w-full mx-auto px-4 sm:px-6 py-8 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8">
+    
+    <!-- LEFT PANEL: Sender Box -->
+    <section class="lg:col-span-5 flex flex-col gap-5">
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div class="mb-5 pb-4 border-b border-slate-100">
+          <h2 class="text-base font-bold text-slate-900">Send an Anonymous Note</h2>
+          <p class="text-xs text-slate-500 mt-0.5">The recipient will never know who wrote this.</p>
+        </div>
+
+        <form id="noteForm" class="flex flex-col gap-4">
+          <!-- "To" Field -->
+          <div>
+            <label for="toInput" class="block text-xs font-semibold text-slate-700 mb-1">
+              To: <span class="font-normal text-slate-400">(Recipient name, team, or alias)</span>
+            </label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs">
+                <i class="fa-solid fa-user"></i>
+              </span>
+              <input 
+                type="text" 
+                id="toInput" 
+                required 
+                maxlength="50"
+                placeholder="e.g. Alex, The Design Team, Anyone" 
+                class="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-900 focus:bg-white transition-all"
+              />
+            </div>
+          </div>
+
+          <!-- Category Tags -->
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">Topic / Tag:</label>
+            <div class="flex flex-wrap gap-1.5" id="categoryGroup">
+              <button type="button" data-cat="Appreciation" class="cat-pill active">Appreciation</button>
+              <button type="button" data-cat="Feedback" class="cat-pill">Feedback</button>
+              <button type="button" data-cat="Advice" class="cat-pill">Advice</button>
+              <button type="button" data-cat="Question" class="cat-pill">Question</button>
+              <button type="button" data-cat="Secret" class="cat-pill">Secret</button>
+            </div>
+          </div>
+
+          <!-- Note Content Area -->
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label for="messageInput" class="text-xs font-semibold text-slate-700">Your Message:</label>
+              <span id="charCount" class="text-[11px] text-slate-400 font-mono">0 / 300</span>
+            </div>
+            <textarea 
+              id="messageInput" 
+              required 
+              rows="4" 
+              maxlength="300"
+              placeholder="Write your honest message here..." 
+              class="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-900 focus:bg-white transition-all resize-none"
+            ></textarea>
+          </div>
+
+          <!-- Quick Prompt Helper -->
+          <div class="flex justify-end">
+            <button type="button" id="randomPromptBtn" class="text-xs text-slate-500 hover:text-slate-900 transition-colors flex items-center gap-1">
+              <i class="fa-regular fa-lightbulb"></i> Need a prompt?
+            </button>
+          </div>
+
+          <!-- Submit Button -->
+          <button 
+            type="submit" 
+            class="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-colors active:scale-[0.99]"
+          >
+            <i class="fa-solid fa-paper-plane text-xs"></i>
+            <span>Post Note</span>
+          </button>
+        </form>
+      </div>
+
+      <!-- Trust Guarantee -->
+      <div class="bg-slate-100 border border-slate-200 rounded-xl p-4 flex items-start gap-3">
+        <i class="fa-solid fa-shield text-slate-500 text-base mt-0.5"></i>
+        <div class="text-xs text-slate-600 leading-relaxed">
+          <strong class="text-slate-800 block mb-0.5">Privacy First</strong>
+          No login needed. No IP addresses or device information are stored with the note.
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL: Feed / Sent Notes -->
+    <section class="lg:col-span-7 flex flex-col gap-4">
+      
+      <!-- Filter Bar -->
+      <div class="bg-white border border-slate-200 rounded-xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm">
+        <div class="relative w-full sm:w-64">
+          <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs">
+            <i class="fa-solid fa-magnifying-glass"></i>
+          </span>
+          <input 
+            type="text" 
+            id="searchInput" 
+            placeholder="Search notes or recipients..." 
+            class="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-900"
+          />
+        </div>
+
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+          <span class="text-xs text-slate-500">Tag:</span>
+          <select id="tagFilter" class="bg-slate-50 border border-slate-200 text-xs text-slate-700 rounded-md px-2.5 py-1.5 focus:outline-none focus:border-slate-900">
+            <option value="All">All Tags</option>
+            <option value="Appreciation">Appreciation</option>
+            <option value="Feedback">Feedback</option>
+            <option value="Advice">Advice</option>
+            <option value="Question">Question</option>
+            <option value="Secret">Secret</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Feed Header Info -->
+      <div class="flex items-center justify-between px-1">
+        <h3 id="feedHeading" class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+          Public Notes Wall
+        </h3>
+        <span id="noteCountBadge" class="text-xs text-slate-400">0 notes</span>
+      </div>
+
+      <!-- Note Cards Container -->
+      <div id="notesContainer" class="flex flex-col gap-3 min-h-[300px]">
+        <!-- Cards dynamically injected by script.js -->
+      </div>
+    </section>
+  </main>
+
+  <!-- Delete Confirmation Modal -->
+  <div id="deleteModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-xl shadow-xl border border-slate-200 max-w-sm w-full p-6 text-center transform transition-all">
+      <div class="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-4 text-xl">
+        <i class="fa-solid fa-trash-can"></i>
+      </div>
+      <h3 class="text-base font-bold text-slate-900">Delete this note?</h3>
+      <p class="text-xs text-slate-500 mt-1">This action cannot be undone. The message will be permanently removed.</p>
+      
+      <div class="flex items-center justify-center gap-3 mt-6">
+        <button id="cancelDeleteBtn" class="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg text-xs font-semibold hover:bg-slate-50 transition-colors w-1/2">
+          Cancel
+        </button>
+        <button id="confirmDeleteBtn" class="px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700 transition-colors w-1/2">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2 text-xs font-medium translate-y-20 opacity-0 transition-all duration-200 pointer-events-none">
+    <i id="toastIcon" class="fa-solid fa-check text-emerald-400"></i>
+    <span id="toastMessage">Note sent successfully</span>
+  </div>
+
+  <!-- Custom JavaScript -->
+  <script src="scripts.js"></script>
+</body>
+</html>
